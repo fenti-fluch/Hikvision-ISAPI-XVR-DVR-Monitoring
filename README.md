@@ -31,4 +31,4 @@
   Кол-во активных аналоговых каналов (Есть изображение).
   Кол-во активных IP каналов.
 
-<img width="1698" height="900" alt="image" src="https://github.com/user-attachments/assets/b70e4577-a21d-418d-855f-3d1ad2f96e4f" />
+<img width="1650" height="904" alt="image" src="https://github.com/user-attachments/assets/1ea48ee7-05d7-4449-b9ac-94ca7f1f3396" />
