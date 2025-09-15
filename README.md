@@ -9,6 +9,7 @@
 
 На узле сети создать макросы:
 
+
 {$HIKVISION_ISAPI_HOST} - IP адрес устройства
 {$HIKVISION_ISAPI_PORT} - порт (80 по умолчанию)
 {$USER}                 - логин
