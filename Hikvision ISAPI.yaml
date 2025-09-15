@@ -1,0 +1,1025 @@
+zabbix_export:
+  version: '7.2'
+  template_groups:
+    - uuid: d37f71c7e3f7469bab645852a69a2018
+      name: 'Templates/Video surveillance'
+  templates:
+    - uuid: 3fb4020df2984b0ab64dfd8355ff5c65
+      template: 'Hikvision HTTP'
+      name: 'Hikvision HTTP'
+      description: |
+        Данный шаблон представляет собой переработанную версию оригинального шаблона от Zabbix.
+        Сохранились родительских HTTP-запроса.
+        Основной акцент сделан на поддержку оборудования DVR/XVR Hikvision.
+      vendor:
+        name: Zabbix
+        version: 7.2-1
+      groups:
+        - name: 'Templates/Video surveillance'
+      items:
+        - uuid: 0ddf602035e44fd19841cb1dd2fdf697
+          name: 'Объём жёсткого диска'
+          type: DEPENDENT
+          key: hdd.capacity
+          history: 7d
+          value_type: TEXT
+          description: 'Total capacity of HDD in terabytes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.storage.hddList.hdd
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var hddData = JSON.parse(value);
+                            var capacities = [];
+                  
+                             // Если hdd — это массив
+                            if (Array.isArray(hddData))  {
+                              hddData.forEach(function(hdd) {
+                                var capacityMB  = parseFloat(hdd.capacity);
+                                var capacityTB = (capacityMB  / 1048576).toFixed(2); // 1 TB = 1048576 MB
+                                capacities.push(capacityTB  + " TB");
+                              });
+                            }
+                            // Если hdd — это  объект
+                            else if (typeof hddData === 'object') {
+                               var capacityMB = parseFloat(hddData.capacity);
+                              var capacityTB  = (capacityMB / 1048576).toFixed(2);
+                              capacities.push(capacityTB  + " TB");
+                            }
+                  
+                            return capacities.join(" / ");
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: hikvision.get_storage_info
+          tags:
+            - tag: component
+              value: system
+        - uuid: 94db6765564c46de897aab5d1ff1553e
+          name: 'Количество активных аналоговых каналов'
+          type: HTTP_AGENT
+          key: hikvision.active_analog_channels_count
+          delay: 1h
+          history: 7d
+          trends: '0'
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Number of active analog channels (resDesc not "NO VIDEO")'
+          preprocessing:
+            - type: XMLPATH
+              parameters:
+                - 'count(//*[local-name()=''VideoInputChannel''][*[local-name()=''resDesc'']!="NO VIDEO"])'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/System/Video/inputs/channels'
+          tags:
+            - tag: component
+              value: system
+        - uuid: 4b89a6f5be9a43f3867bcaba9d135ecd
+          name: 'Получить количество аналоговых каналов'
+          type: HTTP_AGENT
+          key: hikvision.analog_channels_count
+          delay: 1h
+          history: 7d
+          trends: '0'
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Returns information about analog video input channels in XML format'
+          preprocessing:
+            - type: XMLPATH
+              parameters:
+                - 'count(//*[local-name()=''VideoInputChannel''])'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/System/Video/inputs/channels'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 817bfcef53e7447c8a6d9c49b7b346bf
+          name: 'Получить информацию об аналоговых каналах'
+          type: HTTP_AGENT
+          key: hikvision.analog_channels_info
+          delay: 1h
+          history: '0'
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Returns information about analog video input channels in XML format'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/System/Video/inputs/channels'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 0ddd3af82fb64b75821dc1fab96c16ab
+          name: 'Получить информацию об устройстве'
+          type: HTTP_AGENT
+          key: hikvision.get_info
+          delay: 1h
+          history: '0'
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Used to get the device information'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+            - type: XML_TO_JSON
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/System/deviceInfo'
+          status_codes: '200,401'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 546e6beda3704fc5a3e503208c9bbde3
+          name: 'Логин/Сетевой статус'
+          type: DEPENDENT
+          key: hikvision.get_login_status
+          history: 7d
+          value_type: TEXT
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  try {
+                      var data = JSON.parse(value);
+                      
+                      // Проверка на HTML-ошибки  (если камера вернула страницу вместо JSON)
+                      if ("html" in data)  {
+                          if (data.html.head.title === "Document Error: Unauthorized" ) return "Error: Unauthorized";
+                          if (data.html.head.title ===  "Connection error") return "Error: Connection failed";
+                          return  "Error: Unknown HTML response";
+                      }
+                      
+                      // Проверка наличия  DeviceStatus в JSON
+                      if (!("DeviceStatus" in data)) {
+                          return  "Error: Invalid response (no DeviceStatus)";
+                      }
+                      
+                      // Если  дошли сюда — устройство онлайн
+                      return "online";
+                      
+                  } catch  (e) {
+                      return "Error: JSON parsing failed";
+                  }
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 2h
+          master_item:
+            key: hikvision.get_status
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: b41df2e84163416bb2a7a2e797f00fb1
+              expression: 'last(/Hikvision HTTP/hikvision.get_login_status)<>"online"'
+              name: 'Ошибка подключения: {ITEM.LASTVALUE}'
+              priority: HIGH
+              tags:
+                - tag: Hikvision
+                  value: Network
+        - uuid: 36ad2f0ef3ac411e9c20192b1c1900d3
+          name: 'Получить статистику сети'
+          type: HTTP_AGENT
+          key: hikvision.get_newtwork.status
+          history: '0'
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Получение информации о входящем и исходящем трафике с регистратора'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/System/Network/statistics'
+          status_codes: '200,401'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 1ad3e3c9f60043a58f63addc8768c887
+          name: 'Получить информацию о состоянии системы'
+          type: HTTP_AGENT
+          key: hikvision.get_status
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'It is used to get the status information of the device'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+            - type: XML_TO_JSON
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/System/status'
+          status_codes: '200,401'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 109fae5a2b61476a9b78a33b9ad75de2
+          name: 'Получить информацию о хранилище'
+          type: HTTP_AGENT
+          key: hikvision.get_storage_info
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'It is used to get the status information of the device'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+            - type: XML_TO_JSON
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/ContentMgmt/Storage'
+          status_codes: '200,401'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: f70b3cf632064b778b99bd942aac6873
+          name: 'Статус жёсткого диска'
+          type: DEPENDENT
+          key: hikvision.hdd.status
+          history: 7d
+          value_type: TEXT
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  try {
+                      var data = JSON.parse(value);
+                      var hdds = data.storage.hddList.hdd;
+                       var results = [];
+                      
+                      // Нормализация данных (преобразуем объект  в массив если нужно)
+                      if (!Array.isArray(hdds)) {
+                          hdds =  [hdds];
+                      }
+                      
+                      // Обработка каждого диска
+                      for (var i =  0; i < hdds.length; i++) {
+                          var hdd = hdds[i];
+                          var statusText  = hdd.status === "ok" ? "OK" : "Error: " + (hdd.hddName || "HDD"  + hdd.id) + " - " + hdd.status;
+                          results.push(statusText);
+                       }
+                      
+                      return results.length > 0 ? results.join(" / ") : " No disks detected";
+                  
+                  } catch (e) {
+                      return "Error: " + e.message;
+                   }
+          master_item:
+            key: hikvision.get_storage_info
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 6e64d8ecf980454bacb1d237999659f9
+              expression: 'find(/Hikvision HTTP/hikvision.hdd.status,,"like","idle")'
+              name: 'Hikvision: HDD спящий режим'
+              event_name: 'Актвиирован спящий режим HDD'
+              opdata: 'Один из дисков спит'
+              priority: WARNING
+              description: |
+                Один из дисков спит. 
+                Спящий режим желательно отключить
+            - uuid: 9663520b4406440b8ed927bc3f360fdd
+              expression: |
+                find(/Hikvision HTTP/hikvision.hdd.status,,"like","error") >= 1 or
+                find(/Hikvision HTTP/hikvision.hdd.status,,"like","fail") >= 1 or
+                find(/Hikvision HTTP/hikvision.hdd.status,,"like","unknown") >= 1 or
+                find(/Hikvision HTTP/hikvision.hdd.status,,"like","notexist") >= 1
+              name: 'Hikvision:  Ошибка статуса жесткого диска'
+              event_name: 'Ошибка HDD {ITEM.LASTVALUE}'
+              priority: DISASTER
+              description: 'Один или несколько жестких дисков имеют статус «не в порядке». Текущий статус: {ITEM.LASTVALUE}'
+        - uuid: 43324f620456467a8e50e5936ecbe35d
+          name: 'Входящий трафик'
+          type: DEPENDENT
+          key: hikvision.network.in
+          history: 1h
+          trends: '0'
+          units: Kbps
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inputBandwidth
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: hikvision.get_newtwork.status
+        - uuid: 6d7dd17513f5422d80540aa1427787de
+          name: 'Исходящий трафик'
+          type: DEPENDENT
+          key: hikvision.outputBandwidth
+          history: 1d
+          trends: '0'
+          units: кбт/с
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.outputBandwidth
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: hikvision.get_newtwork.status
+        - uuid: 247a70ed0cc543d69183a6a793cd9978
+          name: 'Загрузка процессора'
+          type: DEPENDENT
+          key: hikvision_cam.cpu.util
+          history: 7d
+          value_type: FLOAT
+          trends: '0'
+          units: '%'
+          description: 'CPU utilization in %'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceStatus.CPUList.CPU.cpuUtilization
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: hikvision.get_status
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 0ae4dbcc05544fb7b67183fcf3b9654b
+              expression: 'min(/Hikvision HTTP/hikvision_cam.cpu.util,5m)>{$CPU.UTIL.CRIT}'
+              name: 'Hikvision:  Высокая загрузка ЦП'
+              event_name: 'Hikvision: Высокая загрузка ЦП (более {$CPU.UTIL.CRIT}% в течение 5 мин.)'
+              opdata: 'Current utilization: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Загрузка ЦП слишком высокая. Система может медленно реагировать'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 7e65f407b515429caf415820dd633b0e
+          name: 'Текущее время устройства'
+          type: DEPENDENT
+          key: hikvision_cam.current_device_time
+          history: 7d
+          value_type: CHAR
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceStatus.currentDeviceTime
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: hikvision.get_status
+          tags:
+            - tag: component
+              value: system
+        - uuid: 84d86e688a31402a82798f9e2ff04ab8
+          name: 'Тип устройства'
+          type: DEPENDENT
+          key: hikvision_cam.device_type
+          history: 7d
+          value_type: CHAR
+          inventory_link: TYPE
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceInfo.deviceType
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 24h
+          master_item:
+            key: hikvision.get_info
+          tags:
+            - tag: component
+              value: system
+        - uuid: 65f89830d9f041f9a1558936dfcffc5f
+          name: 'Получить информацию о потоковых каналах'
+          type: HTTP_AGENT
+          key: hikvision_cam.get_streaming
+          delay: 1h
+          history: '0'
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Used to get the properties of streaming channels for the device'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+            - type: XML_TO_JSON
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"html":{"head":{"title":"Connection error"}}}'
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/Streaming/channels'
+          status_codes: '200,401'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 4efd2fd794af472f93fd666601657127
+          name: 'Получить информацию о IP-каналах'
+          type: HTTP_AGENT
+          key: hikvision_cam.ip_channels_info
+          delay: 1h
+          history: 7d
+          value_type: TEXT
+          authtype: DIGEST
+          username: '{$USER}'
+          password: '{$PASSWORD}'
+          description: 'Returns information about IP video input channels in XML format'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  // Считаем количество вхождений '<InputProxyChannel' в XML
+                  var count = (value.match(/<InputProxyChannel/g) || []).length;
+                  return count;
+          url: 'http://{$HIKVISION_ISAPI_HOST}:{$HIKVISION_ISAPI_PORT}/ISAPI/ContentMgmt/InputProxy/channels/'
+          tags:
+            - tag: component
+              value: system
+        - uuid: da9ec53ecc6b4c25b6539666eb9f6544
+          name: MAC-адрес
+          type: DEPENDENT
+          key: hikvision_cam.mac_address
+          history: 7d
+          value_type: CHAR
+          inventory_link: MACADDRESS_A
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceInfo.macAddress
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 24h
+          master_item:
+            key: hikvision.get_info
+          tags:
+            - tag: component
+              value: system
+        - uuid: d1d026c6240c493387374b756b04452f
+          name: 'Использование памяти'
+          type: DEPENDENT
+          key: hikvision_cam.memory.usage
+          history: 7d
+          trends: '0'
+          units: '%'
+          description: 'Memory utilization in %'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  // Парсим JSON-ответ
+                  var jsonData = JSON.parse(value);
+                  
+                  // Извлекаем значения memoryUsage и memoryAvailable
+                  var memoryUsage = parseFloat(jsonData.DeviceStatus.MemoryList.Memory.memoryUsage);
+                  var memoryAvailable = parseFloat(jsonData.DeviceStatus.MemoryList.Memory.memoryAvailable);
+                  
+                  // Вычисляем общую память
+                  var totalMemory = memoryUsage + memoryAvailable;
+                  
+                  // Вычисляем процент использования памяти
+                  var memoryUsagePercentage = (memoryUsage / totalMemory) * 100;
+                  
+                  // Возвращаем процент использования памяти
+                  return memoryUsagePercentage;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: hikvision.get_status
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 62cfa0b87f234f1cb67b9b5b6b2fa8f2
+              expression: 'min(/Hikvision HTTP/hikvision_cam.memory.usage,5m)>{$MEMORY.UTIL.MAX}'
+              name: 'Hikvision: Высокое использование памяти'
+              event_name: 'Hikvision: Высокая загрузка памяти (>{$MEMORY.UTIL.MAX}% за 5 мин)'
+              priority: AVERAGE
+              description: 'The system is running out of free memory.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: b295689d34934401b0eda407edaee426
+          name: Модель
+          type: DEPENDENT
+          key: hikvision_cam.model
+          history: 7d
+          value_type: CHAR
+          inventory_link: MODEL
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceInfo.model
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 24h
+          master_item:
+            key: hikvision.get_info
+          tags:
+            - tag: component
+              value: system
+        - uuid: b6715593c52a4255ae6a4f68c3de6b6d
+          name: 'Серийный номер'
+          type: DEPENDENT
+          key: hikvision_cam.serial_number
+          history: 7d
+          value_type: CHAR
+          inventory_link: SERIALNO_A
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceInfo.serialNumber
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 24h
+          master_item:
+            key: hikvision.get_info
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 281999cbd6324aacbbb86b4945000c60
+              expression: 'last(/Hikvision HTTP/hikvision_cam.serial_number,#1)<>last(/Hikvision HTTP/hikvision_cam.serial_number,#2) and length(last(/Hikvision HTTP/hikvision_cam.serial_number))>0'
+              name: 'Hikvision: Устройство было заменено'
+              event_name: 'Hikvision: Устройство было заменено (получен новый серийный номер)'
+              priority: INFO
+              description: 'Серийный номер устройства изменился. Подтвердите, чтобы закрыть проблему вручную.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: 4e680a5e347948fe8118b58c2c62d55f
+          name: 'Время работы'
+          type: DEPENDENT
+          key: hikvision_cam.uptime
+          history: 7d
+          trends: '0'
+          units: uptime
+          description: 'The system uptime expressed in the following format: "N days, hh:mm:ss".'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.DeviceStatus.deviceUpTime
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: hikvision.get_status
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: f46b43fe9b354990929e7fdb80b792ec
+              expression: 'last(/Hikvision HTTP/hikvision_cam.uptime)<10m'
+              name: 'Hikvision: Устройство перезапущено'
+              event_name: 'Hikvision: Устройство перезапущено (время работы < 10 мин)'
+              priority: INFO
+              description: 'Время безотказной работы составляет менее 10 минут.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: 7a3e176a994e41e1b72011c7008409a3
+          name: 'Кол-во активных всего'
+          type: CALCULATED
+          key: hivkision.active_chanel_all
+          history: 7d
+          trends: 7d
+          params: last(//hikvision_cam.ip_channels_info)+last(//hikvision.active_analog_channels_count)
+          triggers:
+            - uuid: b92badc7255d42b2a591df992b0754bd
+              expression: 'last(/Hikvision HTTP/hivkision.active_chanel_all,#1)<>last(/Hikvision HTTP/hivkision.active_chanel_all,#2) and length(last(/Hikvision HTTP/hivkision.active_chanel_all))>0'
+              name: 'Hikvision: Количество активных каналов изменилось'
+              event_name: 'Hikvision: Текущее {ITEM.LASTVALUE} (было: {ITEM.PREVVALUE})'
+              priority: INFO
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: notice
+            - uuid: 243be19d556344a4afd5724bb8f71899
+              expression: 'last(/Hikvision HTTP/hivkision.active_chanel_all)>last(/Hikvision HTTP/hivkision.active_chanel_all,#2)'
+              name: 'Восстановление камер. Текущее: {ITEM.LASTVALUE} (было: {ITEM.PREVVALUE})'
+              priority: INFO
+            - uuid: 273aa818c1f145fd823988b65c49d049
+              expression: 'last(/Hikvision HTTP/hivkision.active_chanel_all) < last(/Hikvision HTTP/hivkision.active_chanel_all, #2)'
+              name: 'Потеря камер! Текущее: {ITEM.LASTVALUE} (было: {ITEM.PREVVALUE})'
+              priority: HIGH
+              tags:
+                - tag: Hikvision
+                  value: Camera
+      discovery_rules:
+        - uuid: f78999e728634a5eb0a56b04dc975ad3
+          name: 'Camera Channels Discovery'
+          type: DEPENDENT
+          key: camera.channels.discovery
+          item_prototypes:
+            - uuid: 618c82a6246c4fe1a305cf7b16884b9b
+              name: 'Camera {#CAMERA_ID} Status'
+              type: DEPENDENT
+              key: 'camera.status[{#CAMERA_ID}]'
+              history: 7d
+              trends: 7d
+              preprocessing:
+                - type: XMLPATH
+                  parameters:
+                    - '//*[local-name()=''VideoInputChannel''][*[local-name()=''id'']="{#CAMERA_ID}"]/*[local-name()=''resDesc'']'
+                - type: REGEX
+                  parameters:
+                    - 'NO VIDEO'
+                    - '0'
+                - type: REGEX
+                  parameters:
+                    - '.*'
+                    - '1'
+              master_item:
+                key: hikvision.analog_channels_info
+          master_item:
+            key: hikvision.analog_channels_info
+          lld_macro_paths:
+            - lld_macro: '{#CAMERA_ID}'
+              path: //VideoInputChannel/id/text()
+          preprocessing:
+            - type: XMLPATH
+              parameters:
+                - '//*[local-name()=''VideoInputChannel'']'
+            - type: REGEX
+              parameters:
+                - 'NO VIDEO'
+                - '0'
+            - type: REGEX
+              parameters:
+                - '.*'
+                - '1'
+      macros:
+        - macro: '{$HIKVISION_ISAPI_HOST}'
+          value: '<SET ISAPI HOST>'
+          description: 'Ip адрес'
+        - macro: '{$HIKVISION_ISAPI_PORT}'
+          value: '80'
+          description: Порт
+        - macro: '{$PASSWORD}'
+          type: SECRET_TEXT
+          description: Пароль
+        - macro: '{$USER}'
+          value: admin
+          description: Логин
+      dashboards:
+        - uuid: db988ae8a2044b4da5e0ca388bb92d39
+          name: 'Hikvision device info'
+          auto_start: 'NO'
+          pages:
+            - widgets:
+                - type: hostcard
+                  width: '14'
+                  fields:
+                    - type: INTEGER
+                      name: sections.0
+                      value: '1'
+                    - type: INTEGER
+                      name: sections.1
+                      value: '7'
+                - type: item
+                  name: Модель
+                  'y': '2'
+                  width: '14'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Hikvision HTTP'
+                        key: hikvision_cam.model
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_bold
+                      value: '0'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_bold
+                      value: '0'
+                - type: item
+                  name: 'Серийный Номер'
+                  'y': '4'
+                  width: '14'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Hikvision HTTP'
+                        key: hikvision_cam.serial_number
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_bold
+                      value: '0'
+                    - type: INTEGER
+                      name: value_bold
+                      value: '0'
+                    - type: INTEGER
+                      name: value_h_pos
+                      value: '0'
+                - type: problems
+                  'y': '6'
+                  width: '72'
+                  height: '6'
+                  fields:
+                    - type: STRING
+                      name: reference
+                      value: TLSSD
+                    - type: INTEGER
+                      name: severities.0
+                      value: '1'
+                    - type: INTEGER
+                      name: severities.1
+                      value: '2'
+                    - type: INTEGER
+                      name: severities.2
+                      value: '3'
+                    - type: INTEGER
+                      name: severities.3
+                      value: '4'
+                    - type: INTEGER
+                      name: severities.4
+                      value: '5'
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                - type: item
+                  name: 'Сетевой статус'
+                  x: '14'
+                  width: '19'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Hikvision HTTP'
+                        key: hikvision.get_login_status
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_bold
+                      value: '0'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 00FF00
+                - type: item
+                  name: 'MAC Address'
+                  x: '14'
+                  'y': '2'
+                  width: '19'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Hikvision HTTP'
+                        key: hikvision_cam.mac_address
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_bold
+                      value: '0'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_bold
+                      value: '0'
+                - type: item
+                  name: 'Время устройства'
+                  x: '14'
+                  'y': '4'
+                  width: '19'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_size
+                      value: '25'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Hikvision HTTP'
+                        key: hikvision_cam.current_device_time
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_bold
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '35'
+                - type: item
+                  name: 'Активных каналов всего'
+                  x: '33'
+                  width: '11'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Hikvision HTTP'
+                        key: hivkision.active_chanel_all
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_bold
+                      value: '0'
+                - type: honeycomb
+                  name: 'Активных IP каналов'
+                  x: '33'
+                  'y': '3'
+                  width: '11'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Получить информацию о IP-каналах'
+                    - type: INTEGER
+                      name: primary_label_decimal_places
+                      value: '0'
+                    - type: INTEGER
+                      name: primary_label_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: HATRP
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                - type: honeycomb
+                  name: 'Аналоговых каналов'
+                  x: '44'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Получить количество аналоговых каналов'
+                    - type: INTEGER
+                      name: primary_label_decimal_places
+                      value: '0'
+                    - type: INTEGER
+                      name: primary_label_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: MFAOR
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                - type: honeycomb
+                  name: 'Активных аналоговых каналов'
+                  x: '44'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Количество активных аналоговых каналов'
+                    - type: INTEGER
+                      name: primary_label_decimal_places
+                      value: '0'
+                    - type: INTEGER
+                      name: primary_label_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: HHLZP
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                - type: honeycomb
+                  name: 'Объём HDD'
+                  x: '56'
+                  width: '8'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Объём HDD'
+                    - type: STRING
+                      name: items.1
+                      value: 'Объём жёсткого диска'
+                    - type: INTEGER
+                      name: primary_label_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: ERZIW
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                - type: honeycomb
+                  name: 'Статус HDD'
+                  x: '56'
+                  'y': '3'
+                  width: '8'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Статус жёсткого диска'
+                    - type: INTEGER
+                      name: primary_label_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: BHTGZ
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                - type: honeycomb
+                  name: 'Загрузка ЦП'
+                  x: '64'
+                  width: '8'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Загрузка процессора'
+                    - type: STRING
+                      name: reference
+                      value: MTFLI
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                - type: honeycomb
+                  name: 'Загрузка ОЗУ'
+                  x: '64'
+                  'y': '3'
+                  width: '8'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Использование памяти'
+                    - type: INTEGER
+                      name: primary_label_decimal_places
+                      value: '0'
+                    - type: INTEGER
+                      name: primary_label_type
+                      value: '1'
+                    - type: STRING
+                      name: primary_label_units
+                      value: '%'
+                    - type: STRING
+                      name: reference
+                      value: AFGSU
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+  graphs:
+    - uuid: 30cfa75b2afb490f8448a63366577144
+      name: 'Hikvision camera: CPU utilization'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 1A7C11
+          item:
+            host: 'Hikvision HTTP'
+            key: hikvision_cam.cpu.util
+    - uuid: 0cd19b0f8f57435e8b3e1284574e4b79
+      name: 'Hikvision camera: Memory'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - color: 1A7C11
+          item:
+            host: 'Hikvision HTTP'
+            key: hikvision_cam.memory.usage
